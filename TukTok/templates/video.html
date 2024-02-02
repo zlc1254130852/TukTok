@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width,initial-scale=1.0">
+		<title></title>
+		<link rel="stylesheet" href="../static/plugins/bootstrap_v3/css/bootstrap.min.css">
+		<script src="../static/plugins/bootstrap_v3/js/jquery-3.7.1.min.js"></script>
+		<script src="../static/plugins/bootstrap_v3/js/bootstrap.min.js"></script>
+		<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/3.1.3/socket.io.min.js"></script>
+		<script type="text/javascript">
+			var video_id=0 // for testing convenience, here we assume the video ids to be pure digit sequences
+
+			// initialization
+			window.onload = function () {
+				video_id=parseInt(document.getElementById('video_id').innerHTML)
+				document.getElementById('player').src="../static/clips/"+video_id.toString()+".mp4"
+				// set the player to play video with specific id
+			}
+
+			// change to your server ip here
+			var socket = io.connect('http://192.168.2.11:5000');
+
+			// when receiving response from the server
+			socket.on('comment_update', function(res) {
+				// only update the comment to the video that it belongs to
+				if (parseInt(res.update.vlog_id)!=video_id)
+					return;
+				update_comment(res)
+				if(res.update.user==document.getElementById('current_user').innerHTML && document.getElementById('tag').innerHTML=="Logout")
+				{	// if the comment is sent by current user, jump to the top of the comment area to see the new comment
+					document.getElementById('comment_history').scrollTop = 0;
+					document.getElementById('sendButton').disabled=false // unlock the send button for current user
+					document.getElementById('new_comment').value="";	// clear the editting area
+				}
+        	});
+
+        	socket.on('comment_delete', function(res) {
+        		// only update the comment to the video that it belongs to
+        		if (parseInt(res.vlog_id)!=video_id)
+					return;
+				delete_comment(res.cmt_id)
+        	});
+
+        	socket.on('like_update', function(res) {
+        		// only update the likes to the video that it belongs to
+        		if (parseInt(res.vlog_id)!=video_id)
+					return;
+				update_like(res)
+
+				// if the likes/cancel operation is done by current user, change the color of the likes button
+				if(res.user==document.getElementById('current_user').innerHTML && document.getElementById('tag').innerHTML=="Logout"){
+					let likes=document.getElementById('likesButton')
+					if (likes.style.backgroundColor=="black"){
+						likes.style.backgroundColor="white"
+						likes.style.color="black"
+					}
+					else{
+						likes.style.backgroundColor="black"
+						likes.style.color="white"
+					}
+					likes.disabled=false // unlock the likes button
+				}
+        	});
+
+			// when likes button is clicked
+			function likes(){
+				// guests must log in to operate
+				if(document.getElementById('tag').innerHTML=="Register"){
+					alert("Please log in to proceed");
+					return;
+				}
+
+				document.getElementById('likesButton').disabled=true // lock the likes button
+				var current_user=document.getElementById('current_user').innerHTML
+
+				// send the update to the server
+				if (document.getElementById('likesButton').style.backgroundColor=="black"){ // cancel likes
+					socket.emit('like_update', {u_name: current_user,v_id: video_id,like_val: "-1",});
+				} else{																		// likes
+					socket.emit('like_update', {u_name: current_user,v_id: video_id,like_val: "1",});
+				}
+			}
+
+			// when the comment button is clicked, show or hide the comment area
+			function comment(){
+				if (document.getElementById('commentArea').hidden){
+					document.getElementById('player').style.height="400px"
+					document.getElementById('commentArea').hidden=false
+				} else{
+					document.getElementById('player').style.height="600px"
+					document.getElementById('commentArea').hidden="hidden"
+				}
+			}
+
+			// share the link
+			function copyLink() {
+				var link = window.top.location.href
+				// create an invisible textarea to store the link
+				var textarea = document.createElement('textarea');
+				textarea.value = link;
+				document.body.appendChild(textarea);
+				textarea.select();
+				document.execCommand('copy');	// copy the link
+				document.body.removeChild(textarea);	// remove the invisible textarea element
+				alert('Link copied to the clipboard!');
+			}
+
+			// last video
+			function last(){
+				let total= parseInt(document.getElementById('total_video_count').innerHTML)
+				video_id-=1
+				video_id+=total
+				video_id%=total
+				window.location.href = "/video/"+video_id.toString()
+			}
+
+			// next video
+			function next(){
+				let total= parseInt(document.getElementById('total_video_count').innerHTML)
+				video_id+=1
+				video_id%=total
+				window.location.href = "/video/"+video_id.toString()
+			}
+
+			// when send button for the comment is clicked
+			function send(){
+				// guests must log in to operate
+				if(document.getElementById('tag').innerHTML=="Register"){
+					alert("Please log in to proceed");
+					return;
+				}
+
+				var current_user=document.getElementById('current_user').innerHTML
+				var comment_content=$("#new_comment").val()
+
+				if (comment_content.trim()=="")	// if the editing area is empty, it will not be sent
+					return
+
+				document.getElementById('sendButton').disabled=true // lock the send button
+				document.getElementById('new_comment').value="";	// clear the editing area
+				// send to the server
+				socket.emit('comment_update', {u_name: current_user,v_id: video_id,c_content: comment_content});
+			}
+
+			// when the delete button of a comment is clicked
+			function del_comment(cmt_id){
+				document.getElementById("del_btn_"+cmt_id).disabled=true	// lock the delete button
+				socket.emit('comment_delete',{comment_id:cmt_id})	// send request to the server
+			}
+
+			// update the number of likes
+			function update_like(res){
+				document.getElementById('numLikes').innerHTML=res.like_counts
+			}
+
+			// load new comment in the comment area
+			function update_comment(res){
+				var parent=document.getElementById('comment_history')
+
+				// create new comment element
+				let div0 = document.createElement("div")
+				div0.setAttribute("id","cmt_"+res.update.id)
+				div0.innerHTML=res.update.user+" "+res.update.time+": "+res.update.comment;
+				div0.setAttribute("onclick","reply("+res.update.id+")")
+				div0.setAttribute("style","word-wrap: break-word;max-width:100%;white-space:pre-line")
+
+				// if the comment is done by current user, add a delete button for the user
+				if(res.update.user==document.getElementById('current_user').innerHTML && document.getElementById('tag').innerHTML=="Logout")
+				{
+					let div1 = document.createElement("button")
+					div1.setAttribute("id","del_btn_"+res.update.id)
+					div1.setAttribute("type","button")
+					div1.setAttribute("class","btn btn-default")
+					div1.setAttribute("style","position: relative;width:10px;height:10px;background-color:black;color:white;border-color:black")
+					div1.setAttribute("onclick","del_comment("+res.update.id+")")
+
+					var div10 = document.createElement("span")
+					div10.setAttribute("aria-hidden","true")
+					div10.setAttribute("class","glyphicon glyphicon-trash")
+					div10.setAttribute("style","position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);")
+					div1.appendChild(div10)
+					parent.prepend(div1)
+				}
+
+				parent.prepend(div0)
+				document.getElementById('numComments').innerHTML=res.update.comment_counts
+			}
+
+			// unload comment in the comment area
+			function delete_comment(cmt_id)
+			{
+				var prt=document.getElementById('comment_history')
+				let cmt_to_del = document.getElementById("cmt_"+cmt_id)
+				let del_btn_to_del = document.getElementById("del_btn_"+cmt_id)
+
+				// delete the comment and the corresponding delete button if existed.
+				prt.removeChild(cmt_to_del)
+				if(del_btn_to_del)
+					prt.removeChild(del_btn_to_del)
+
+				// update the number of comment showed
+				var cmt_num=parseInt(document.getElementById("numComments").innerHTML)
+				cmt_num-=1
+				document.getElementById("numComments").innerHTML=cmt_num.toString()
+			}
+		</script>
+	</head>
+	<body>
+		<nav class="navbar navbar-inverse">
+		  <div class="container-fluid">
+			<!-- Brand and toggle get grouped for better mobile display -->
+			<div class="navbar-header">
+			  <button type="button" class="navbar-toggle collapsed" data-toggle="collapse" data-target="#bs-example-navbar-collapse-1" aria-expanded="false">
+				<span class="sr-only">Toggle navigation</span>
+				<span class="icon-bar"></span>
+				<span class="icon-bar"></span>
+				<span class="icon-bar"></span>
+			  </button>
+			  <a class="navbar-brand" href="#">TukTok</a>
+			</div>
+
+			<!-- Collect the nav links, forms, and other content for toggling -->
+			<div class="collapse navbar-collapse" id="bs-example-navbar-collapse-1">
+			  <ul class="nav navbar-nav navbar-right">
+				  {% if current_user %}
+				  	<li><a id="current_user" href="javascript:void(0);">{{current_user}}</a></li>
+                	<li><a id="tag" href="/logout">Logout</a></li>
+                {% else %}
+					<li><a id="current_user" href="/login">Login</a></li>
+				  	<li><a id="tag" href="/reg">Register</a></li>
+				  {% endif %}
+			  </ul>
+			</div><!-- /.navbar-collapse -->
+		  </div><!-- /.container-fluid -->
+		</nav>
+
+		<div style="margin-left:39%; display: inline-block;background-color:black;width: 340px">
+
+			<div id="video_id" hidden="hidden">{{video_id}}</div>
+			<div id="total_video_count" hidden="hidden">{{total_vlog_count}}</div>
+
+			<div style="position:relative;width: 100%;">
+
+				<video id="player" class="video" style="width: 100%;height: 600px;"
+						src="" autoplay controls loop>
+				</video>
+
+				<div style="display: inline-block;position:absolute;bottom:100px;right:10px;z-index:1" class="overlay">
+					{% if like_counts %}
+						<div id="numLikes" style="color:white" align="center">{{like_counts}}</div>
+					{% else %}
+						<div id="numLikes" style="color:white" align="center">0</div>
+					{% endif %}
+<!--					<div id="numLikes" align="center">0</div>-->
+					{% if like %}
+					<button style="background-color:black;color:white" id="likesButton" type="button" onclick="likes()" class="btn btn-default">
+						<span class="glyphicon glyphicon-thumbs-up" aria-hidden="true"></span>
+					</button>
+					{% else %}
+					<button id="likesButton" type="button" onclick="likes()" class="btn btn-default">
+						<span class="glyphicon glyphicon-thumbs-up" aria-hidden="true"></span>
+					</button>
+					{% endif %}
+					<br>
+					{% if comment_counts %}
+						<div id="numComments" style="color:white" align="center">{{comment_counts}}</div>
+					{% else %}
+						<div id="numComments" style="color:white" align="center">0</div>
+					{% endif %}
+					<button onclick="comment()" type="button" class="btn btn-default">
+						<span class="glyphicon glyphicon-comment" aria-hidden="true"></span>
+					</button>
+					<br><br>
+					<button onclick="copyLink()" type="button" class="btn btn-default">
+						<span class="glyphicon glyphicon-share-alt" aria-hidden="true"></span>
+					</button>
+				</div>
+
+				<div id="intro" style="overflow-y: auto;width: 80%;height: 100px;
+					position:absolute;bottom:80px;left:2px;" class="overlay">
+					<p style="word-wrap: break-word;color:white;white-space:pre-line">{{title}}</p>
+					<p style="word-wrap: break-word;color:white;white-space:pre-line">{{profile}}</p>
+				</div>
+			</div>
+
+			<div id="commentArea" hidden="hidden" style="width: 100%;">
+
+				<div id="comment_history" style="overflow-y: auto;color:white;width: 100%;height: 150px">
+					{% for tmp_comment in comment_list %}
+						<div id="cmt_{{tmp_comment.id}}" style="word-wrap: break-word;max-width:100%;white-space:pre-line">{{ tmp_comment.name+" "+tmp_comment.time+": "+tmp_comment.content }}</div>
+						{% if current_user==tmp_comment.name %}
+							<button style="position: relative;width:10px;height:10px;background-color:black;
+									color:white;border-color:black" type="button" class="btn btn-default"
+									id="del_btn_{{tmp_comment.id}}" onclick="del_comment({{ tmp_comment.id}})">
+								<span style="position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);"
+									  class="glyphicon glyphicon-trash" aria-hidden="true"></span>
+							</button>
+						{% endif %}
+					{% endfor %}
+				</div>
+
+				<div style="width: 100%;height: 50px;">
+
+					<textarea id="new_comment" placeholder="Enter your comment here"
+							  style="margin-left:2px;resize: none;width: 85%;height: 100%;margin-bottom:-10px"
+							  onkeydown="if(!event.shiftKey && event.keyCode === 13) send()"></textarea>
+
+					<button id="sendButton" type="button" onclick="send()" class="btn btn-default"
+							style="display: inline-block;width: 13%;height: 100%;margin-bottom:25px">
+						<span class="glyphicon glyphicon-send" aria-hidden="true"></span>
+					</button>
+
+				</div>
+
+			</div>
+
+		</div>
+
+		<div style="margin-left:30px; display: inline-block">
+			<button onclick="last()" type="button" class="btn btn-default">
+				<span class="glyphicon glyphicon-chevron-up" aria-hidden="true"></span>
+			</button>
+			<br><br>
+			<button onclick="next()" type="button" class="btn btn-default">
+				<span class="glyphicon glyphicon-chevron-down" aria-hidden="true"></span>
+			</button>
+			<br><br><br><br><br><br><br>
+		</div>
+	</body>
+</html>
